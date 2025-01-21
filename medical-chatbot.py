@@ -1,5 +1,6 @@
 import os
-import getpass
+import time
+import streamlit as st
 from typing import Sequence
 from typing_extensions import Annotated, TypedDict
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -9,42 +10,40 @@ from langchain_core.messages import (
     trim_messages,
     BaseMessage,
 )
-from langgraph.checkpoint.memory import MemorySaver
-from langgraph.graph import START, StateGraph
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_mongodb.chat_message_histories import MongoDBChatMessageHistory
-from langgraph.graph.message import add_messages
 from dotenv import load_dotenv
 
 
+load_dotenv()
 
-load_dotenv()  # Load environment variables from .env
-api_key = os.getenv("GOOGLE_API_KEY")
-print(api_key)  # Use the key
 
 class State(TypedDict):
-    messages: Annotated[Sequence[BaseMessage], add_messages]
+    messages: Annotated[Sequence[BaseMessage], list]
     language: str
 
+
+# AI Model
 class Model:
     def __init__(self):
         self.model = ChatGoogleGenerativeAI(
-            model = "gemini-1.5-flash",
+            model="gemini-1.5-flash",
             temperature=0,
             max_tokens=None,
             timeout=None,
             max_retries=2,
         )
         self.prompt_template = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    "You are a medical assistant. Provide accurate, evidence-based answers to medical and health-related questions. Avoid giving medical diagnoses and recommend consulting a licensed healthcare provider for serious concerns. Answer all questions in {language}.",
-                ),
-                MessagesPlaceholder(variable_name="messages"),
-            ]   
+        [
+            (
+                "system",
+                "You are a friendly and knowledgeable health companion. Always introduce yourself as Baymax when someone greets you with phrases like 'Who are you?', 'Hello', or 'Hi'. Respond with: 'Hello, I am Baymax. Your personal healthcare companion.' for such greetings. "
+                "If someone thanks you, reply with: 'You have been a good boy. Have a lollipop.' For all other health-related queries, provide accurate, supportive, and helpful advice in {language}.",
+            ),
+            MessagesPlaceholder(variable_name="messages"),
+        ]
         )
-        # Trimmer
+
         self.trimmer = trim_messages(
             max_tokens=65,
             strategy="last",
@@ -54,63 +53,148 @@ class Model:
             start_on="human",
         )
 
-        # Workflow
-        self.workflow = StateGraph(state_schema=State)
-        self.workflow.add_edge(START, "model")
-        self.workflow.add_node("model", self.call_model)
-
-        self.memory = MemorySaver()
-        self.app = self.workflow.compile(checkpointer=self.memory)
-
-    # Calling the Model
-    def call_model(self, state: State):
-        if not state["messages"] or len(state["messages"]) == 1:
-            state["messages"] = self.chat_message_history.messages + state["messages"]
-        print(state["messages"])
-        trimmed_messages = self.trimmer.invoke(state["messages"])
-        prompt = self.prompt_template.invoke(
-            {"messages": trimmed_messages, "language": state["language"]}
-        )
+    def invoke(self, query, chat_message_history):
+        trimmed_messages = self.trimmer.invoke(chat_message_history.messages + [HumanMessage(query)])
+        prompt = self.prompt_template.invoke({"messages": trimmed_messages, "language": "en"})
         response = self.model.invoke(prompt)
-        self.chat_message_history.add_user_message(prompt.messages[-1].content)
-        self.chat_message_history.add_ai_message(response.content)
-        return {"messages": [response]}
-    
-    def invoke(self, query, config, chat_message_history):
-        self.chat_message_history = chat_message_history
-        input_messages = [HumanMessage(query)]
-        response = self.app.invoke(
-                {"messages": input_messages, "language": "en"}, config
+        chat_message_history.add_user_message(query)
+        chat_message_history.add_ai_message(response.content)
+        return response.content
+
+
+# Chat Interface
+class ChatInterface:
+    def __init__(self):
+        self.model = Model()
+
+    def get_chat_history(self, user_id):
+        return MongoDBChatMessageHistory(
+            session_id=user_id,
+            connection_string=os.getenv("MONGO_DB_URI"),
+            database_name="Chatbot",
+            collection_name="chat_histories",
         )
-        return response["messages"][-1].content
+
+    def chat(self, message, history, user_id, language="English"):
+        try:
+            if not user_id:
+                return "", history, "Please enter a user ID first."
+
+            chat_history = self.get_chat_history(user_id)
+            with st.spinner("BayMax is typing..."):
+                response = self.model.invoke(message, chat_history)
+
+            
+            placeholder = st.empty()
+            full_response = ""
+            for char in response:
+                full_response += char
+                placeholder.markdown(f"**BayMax:** {full_response}")
+                time.sleep(0.03)  
+
+            return "", history + [(message, response)], ""
+        except Exception as e:
+            return "", history, f"Error: {str(e)}"
+
+    def reset_chat(self, user_id):
+        try:
+            if not user_id:
+                return None, "Please enter a user ID first"
+            chat_history = self.get_chat_history(user_id)
+            chat_history.clear()
+            return None, f"Chat history cleared for user {user_id}"
+        except Exception as e:
+            return None, f"Error clearing chat: {str(e)}"
+
+
+
+# Streamlit UI
+def main():
+    st.set_page_config(page_title="BayMax - Medical Chatbot", layout="wide")
+    
+
+    st.markdown(
+        """
+        <style>
+        .st-chat {
+            max-width: 800px !important;
+            margin: auto !important;
+            padding: 20px !important;
+            background-color: #f7f7f7 !important;
+            border-radius: 10px !important;
+        }
+        .st-chat-user {
+            text-align: right;  /* Align user messages to the right */
+            color: white !important;
+            font-weight: bold;
+        }
+        .st-chat-bot {
+            text-align: left;  /* Align bot messages to the left */
+            color: #ff6f61 !important;
+            font-weight: bold;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.title("🤖 BayMax")
+   
+
+    chat_interface = ChatInterface()
+
+    
+    with st.sidebar:
+        st.header("Settings")
+        user_id = st.text_input("Username:", value="user1", placeholder="Enter your User ID")
+        language = st.selectbox("Language", ["English", "Spanish", "French", "German", "Chinese"])
+
+        
+        if st.button("🗑️ Clear Chat"):
+            _, status = chat_interface.reset_chat(user_id)
+            st.success(status)
+
+    # chat history
+    if "chat_history" not in st.session_state:
+        st.session_state["chat_history"] = []
+
+   
+    chat_placeholder = st.container()  
+
+    # Input Section
+    
+    message = st.text_input("Your message:", placeholder="Ask BayMax something...")
+    send_button = st.button("🚀 Send")
+
+    if send_button and message.strip():
+        
+        _, st.session_state["chat_history"], error = chat_interface.chat(
+            message, st.session_state["chat_history"], user_id, language
+        )
+        if error:
+            st.error(error)
+
+    
+    with chat_placeholder:
+        for user, msg in st.session_state["chat_history"]:
+            if user:  
+                st.markdown(
+                    f"""
+                    <div class="st-chat-user">
+                        You: {user}
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            st.markdown(
+                f"""
+                <div class="st-chat-bot">
+                    BayMax: {msg}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
 
 if __name__ == "__main__":
-    model = Model()
-    no_of_users = input("Enter the number of users: ")
-
-    # Create memory with initial queries
-    for i in range(int(no_of_users)):
-        query = input(f"Enter your query 1 for user{i+1}: ")
-        config = {"configurable": {"thread_id": "user" + str(i)}}
-        chat_message_history = MongoDBChatMessageHistory(
-            session_id="user" + str(i),
-            connection_string="mongodb://localhost:27017",
-            database_name="my_db",
-            collection_name="chat_histories",
-        )
-        print(model.invoke(query, config, chat_message_history))
-
-    # Check memory with new queries
-    for i in range(int(no_of_users)):
-        query = input(f"Enter your query 2 for user{i+1}: ")
-        config = {"configurable": {"thread_id": "user" + str(i)}}
-        chat_message_history = MongoDBChatMessageHistory(
-            session_id="user" + str(i),
-            connection_string="mongodb://localhost:27017",
-            database_name="my_db",
-            collection_name="chat_histories",
-        )
-        print(model.invoke(query, config, chat_message_history))
-
-    
-    
+    main()
