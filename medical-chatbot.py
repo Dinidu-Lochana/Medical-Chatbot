@@ -22,8 +22,7 @@ class State(TypedDict):
     messages: Annotated[Sequence[BaseMessage], list]
     language: str
 
-
-# AI Model
+# AI Model 
 class Model:
     def __init__(self):
         self.model = ChatGoogleGenerativeAI(
@@ -34,16 +33,15 @@ class Model:
             max_retries=2,
         )
         self.prompt_template = ChatPromptTemplate.from_messages(
-        [
-            (
-                "system",
-                "You are a friendly and knowledgeable health companion. Always introduce yourself as Baymax when someone greets you with phrases like 'Who are you?', 'Hello', or 'Hi'. Respond with: 'Hello, I am Baymax. Your personal healthcare companion.' for such greetings. "
-                "If someone thanks you, reply with: 'You have been a good boy. Have a lollipop.' For all other health-related queries, provide accurate, supportive, and helpful advice in {language}.",
-            ),
-            MessagesPlaceholder(variable_name="messages"),
-        ]
+            [
+                (
+                    "system",
+                    "You are a friendly and knowledgeable health companion. Always introduce yourself as Baymax when someone greets you with phrases like 'Who are you?', 'Hello', or 'Hi'. Respond with: 'Hello, I am Baymax. Your personal healthcare companion.' for such greetings. "
+                    "If someone thanks you, reply with: 'You have been a good boy. Have a lollipop.' For all other health-related queries, provide accurate, supportive, and helpful advice in {language}.",
+                ),
+                MessagesPlaceholder(variable_name="messages"),
+            ]
         )
-
         self.trimmer = trim_messages(
             max_tokens=65,
             strategy="last",
@@ -61,8 +59,7 @@ class Model:
         chat_message_history.add_ai_message(response.content)
         return response.content
 
-
-# Chat Interface
+# Chat Interface 
 class ChatInterface:
     def __init__(self):
         self.model = Model()
@@ -84,38 +81,37 @@ class ChatInterface:
             with st.spinner("BayMax is typing..."):
                 response = self.model.invoke(message, chat_history)
 
-            
+            # Animated typing effect
             placeholder = st.empty()
             full_response = ""
             for char in response:
                 full_response += char
                 placeholder.markdown(f"**BayMax:** {full_response}")
-                time.sleep(0.03)  
+                time.sleep(0.03)
 
             return "", history + [(message, response)], ""
         except Exception as e:
             return "", history, f"Error: {str(e)}"
 
-    def reset_chat(self, user_id):
-        try:
-            if not user_id:
-                return None, "Please enter a user ID first"
-            chat_history = self.get_chat_history(user_id)
-            chat_history.clear()
-            return None, f"Chat history cleared for user {user_id}"
-        except Exception as e:
-            return None, f"Error clearing chat: {str(e)}"
-
-
+    
 
 # Streamlit UI
 def main():
-    st.set_page_config(page_title="BayMax - Medical Chatbot", layout="wide")
     
+    st.set_page_config(
+        page_title="BayMax - Medical Chatbot",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
 
+    # CSS
     st.markdown(
         """
         <style>
+        .stApp {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
         .st-chat {
             max-width: 800px !important;
             margin: auto !important;
@@ -123,78 +119,111 @@ def main():
             background-color: #f7f7f7 !important;
             border-radius: 10px !important;
         }
-        .st-chat-user {
-            text-align: right;  /* Align user messages to the right */
-            color: white !important;
+        .st-chat-user, .st-chat-bot {
+            max-width: 70%; /* Reduce the width of message rectangles */
+            margin: 5px 0;
+            padding: 10px;
+            border-radius: 15px;
             font-weight: bold;
+            text-align:right;
+            word-wrap: break-word;
+        }
+        .st-chat-user {
+            margin-left: auto; /* Align user messages to the right */
+            background-color: #007AFF;
+            color: white !important;
         }
         .st-chat-bot {
-            text-align: left;  /* Align bot messages to the left */
-            color: #ff6f61 !important;
-            font-weight: bold;
+            margin-right: auto; /* Align Baymax messages to the left */
+            background-color: #E9ECEF;
+            color: #1A1A1A !important;
+        }
+        input[type="text"] {
+            background-color: black !important;
+            color: white !important;
+            border: 1px solid #ccc !important;
+            padding: 8px !important;
+            border-radius: 5px !important;
+        }
+        .stTextInput > div > div > input {
+            background-color: black !important;
+            color: white !important;
         }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-    st.title("🤖 BayMax")
-   
-
-    chat_interface = ChatInterface()
+    
+    st.title("🤖 BayMax - Healthcare Chatbot")
+    st.markdown("---")
 
     
+    chat_interface = ChatInterface()
+
+    # Sidebar
     with st.sidebar:
-        st.header("Settings")
-        user_id = st.text_input("Username:", value="user1", placeholder="Enter your User ID")
-        language = st.selectbox("Language", ["English", "Spanish", "French", "German", "Chinese"])
+        st.header("⚙️ Settings")
+        user_id = st.text_input("👤 Username:", value="user1", placeholder="Enter your User ID")
+        language = st.selectbox(
+            "🌐 Language",
+            ["English", "Spanish", "French", "German", "Chinese"]
+        )
 
         
-        if st.button("🗑️ Clear Chat"):
-            _, status = chat_interface.reset_chat(user_id)
-            st.success(status)
-
-    # chat history
+ 
     if "chat_history" not in st.session_state:
         st.session_state["chat_history"] = []
 
+    chat_placeholder = st.container()
+
    
-    chat_placeholder = st.container()  
+    def send_message():
+        if st.session_state.user_message.strip():
+            _, st.session_state["chat_history"], error = chat_interface.chat(
+                st.session_state.user_message,
+                st.session_state["chat_history"],
+                user_id,
+                language
+            )
+            if error:
+                st.error(error)
+            st.session_state.user_message = ""
 
-    # Input Section
-    
-    message = st.text_input("Your message:", placeholder="Ask BayMax something...")
-    send_button = st.button("🚀 Send")
+    # Input area
+    st.markdown("---")
+    col1, col2 = st.columns([6, 1])
 
-    if send_button and message.strip():
-        
-        _, st.session_state["chat_history"], error = chat_interface.chat(
-            message, st.session_state["chat_history"], user_id, language
+    with col1:
+        st.text_input(
+            "Message Baymax:",
+            key="user_message",
+            placeholder="Ask BayMax something...",
+            label_visibility="collapsed"
         )
-        if error:
-            st.error(error)
 
-    
+    with col2:
+        st.button("🚀 Send", on_click=send_message)
+
+    # Display messages
     with chat_placeholder:
-        for user, msg in st.session_state["chat_history"]:
-            if user:  
-                st.markdown(
-                    f"""
-                    <div class="st-chat-user">
-                        You: {user}
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+        for user_msg, bot_msg in st.session_state["chat_history"]:
             st.markdown(
                 f"""
-                <div class="st-chat-bot">
-                    BayMax: {msg}
+                <div class="st-chat-user">
+                    You: {user_msg}
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
-
+            st.markdown(
+                f"""
+                <div class="st-chat-bot">
+                    BayMax: {bot_msg}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
 if __name__ == "__main__":
     main()
