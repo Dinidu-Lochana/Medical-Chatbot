@@ -59,7 +59,7 @@ class Model:
         chat_message_history.add_ai_message(response.content)
         return response.content
 
-# Chat Interface 
+# Chat Interface
 class ChatInterface:
     def __init__(self):
         self.model = Model()
@@ -81,18 +81,9 @@ class ChatInterface:
             with st.spinner("BayMax is typing..."):
                 response = self.model.invoke(message, chat_history)
 
-            # Animated typing effect
-            placeholder = st.empty()
-            full_response = ""
-            for char in response:
-                full_response += char
-                placeholder.markdown(f"**BayMax:** {full_response}")
-                time.sleep(0.03)
-
             return "", history + [(message, response)], ""
         except Exception as e:
             return "", history, f"Error: {str(e)}"
-
     
 
 # Streamlit UI
@@ -120,7 +111,7 @@ def main():
             border-radius: 10px !important;
         }
         .st-chat-user, .st-chat-bot {
-            max-width: 70%; /* Reduce the width of message rectangles */
+            max-width: 70%;
             margin: 5px 0;
             padding: 10px;
             border-radius: 15px;
@@ -129,12 +120,12 @@ def main():
             word-wrap: break-word;
         }
         .st-chat-user {
-            margin-left: auto; /* Align user messages to the right */
+            margin-left: auto; 
             background-color: #007AFF;
             color: white !important;
         }
         .st-chat-bot {
-            margin-right: auto; /* Align Baymax messages to the left */
+            margin-right: auto; 
             background-color: #E9ECEF;
             color: #1A1A1A !important;
         }
